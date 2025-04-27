@@ -40,7 +40,7 @@ type MessageType message.MessageType
 
 const (
 	MessageBinary MessageType = MessageType(message.MessageBinary)
-	MessageText MessageType = MessageType(message.MessageText)
+	MessageText   MessageType = MessageType(message.MessageText)
 )
 
 type state int
@@ -83,13 +83,13 @@ func newClientConn(opts *Options, u *url.URL) (client *clientConn, err error) {
 	}
 
 	client = &clientConn{
-		url:           u,
-		options:       opts,
-		state:         stateNormal,
-		pingTimeout:   60000 * time.Millisecond,
-		pingInterval:  25000 * time.Millisecond,
-		pingChan:      make(chan bool),
-		readerChan:    make(chan *connReader),
+		url:          u,
+		options:      opts,
+		state:        stateNormal,
+		pingTimeout:  60000 * time.Millisecond,
+		pingInterval: 25000 * time.Millisecond,
+		pingChan:     make(chan bool),
+		readerChan:   make(chan *connReader),
 	}
 
 	err = client.onOpen()
@@ -253,23 +253,39 @@ func (c *clientConn) OnClose(server transport.Client) {
 }
 
 func (c *clientConn) onOpen() error {
-
 	var err error
 	c.request, err = http.NewRequest("GET", c.url.String(), nil)
 	if err != nil {
 		return err
 	}
 
-	creater, exists := creaters["polling"]
+	creater, exists := creaters[c.options.Transport]
 	if !exists {
 		return InvalidError
 	}
 
 	q := c.request.URL.Query()
-	q.Set("transport", "polling")
+	q.Set("transport", c.options.Transport)
 	c.request.URL.RawQuery = q.Encode()
-	if (c.options.Header != nil) {
+
+	if c.options.Header != nil {
 		c.request.Header = c.options.Header
+	}
+
+	if c.options.Transport == "websocket" {
+		if c.request.URL.Scheme == "https" {
+			c.request.URL.Scheme = "wss"
+		} else if c.request.URL.Scheme == "http" {
+			c.request.URL.Scheme = "ws"
+		}
+
+		transport, err := creater.Client(c.request)
+		if err != nil {
+			return err
+		}
+		c.setCurrent("websocket", transport)
+
+		return nil
 	}
 
 	transport, err := creater.Client(c.request)
@@ -288,7 +304,6 @@ func (c *clientConn) onOpen() error {
 	if err != nil {
 		return err
 	}
-	//fmt.Println(string(p))
 
 	type connectionInfo struct {
 		Sid          string        `json:"sid"`
@@ -302,10 +317,8 @@ func (c *clientConn) onOpen() error {
 	if err != nil {
 		return err
 	}
-	msg.PingInterval *= 1000 * 1000
-	msg.PingTimeout *= 1000 * 1000
-
-	//fmt.Println(msg)
+	msg.PingInterval *= time.Millisecond
+	msg.PingTimeout *= time.Millisecond
 
 	c.pingInterval = msg.PingInterval
 	c.pingTimeout = msg.PingTimeout
@@ -326,18 +339,15 @@ func (c *clientConn) onOpen() error {
 	if err != nil {
 		return err
 	}
-
 	p2 := make([]byte, 4096)
 	l, err = pack.Read(p2)
 	if err != nil {
 		return err
 	}
-	//fmt.Println(string(p2))
 
 	if c.options.Transport == "polling" {
-		//over
+		// تمام شد
 	} else if c.options.Transport == "websocket" {
-		//upgrade
 		creater, exists = creaters["websocket"]
 		if !exists {
 			return InvalidError
@@ -367,8 +377,6 @@ func (c *clientConn) onOpen() error {
 	} else {
 		return InvalidError
 	}
-
-	//fmt.Println("end")
 
 	return nil
 }
